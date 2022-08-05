@@ -17,6 +17,6 @@ echo "Removing Previous Image $2"
 
 echo "Fetching and Deploying New Image"
 
-/usr/bin/docker run -d -p 4000:3000 --name $1 $2
+/usr/bin/docker run -d -p 5000:3000 --name $1 $2
 
 echo "End of Script"
