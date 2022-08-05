@@ -1,0 +1,95 @@
+name: Publish & Deploy New Build
+on: [push]
+ 
+jobs:
+ push_to_registry:
+   name: Expense Tracker Pipeline
+   runs-on: ubuntu-latest
+   steps:
+ 
+     # This is used to Extract Branch Name from the Github Repo
+     - name: Extract branch name
+       shell: bash
+       run: echo "##[set-output name=branch;]$(echo ${GITHUB_REF#refs/heads/})"
+       id: extract_branch
+ 
+     # This is used to Checkout in the source code of the repo
+     - name: Check out GitHub repo
+       uses: actions/checkout@v2
+ 
+     # This is used to login to dockerhub, Secrets "DOCKERHUB_USERNAME" & "DOCKERHUB_PASSWORD"
+     # are added into Github Secrets of this repo
+     - name: Log in to Docker Hub
+       uses: docker/login-action@v1
+       with:
+         username: ${{ secrets.DOCKERHUB_USERNAME }}
+         password: ${{ secrets.DOCKERHUB_PASSWORD }}
+ 
+     # This is used to publish the docker image to dockerhub, dockerfile must be present in the repo
+     - name: Build image and push to Docker Hub
+       uses: docker/build-push-action@v2
+       with:
+         push: true
+         tags: myasin786/expense-tracker:latest-${{ steps.extract_branch.outputs.branch }}
+         
+ 
+     # > For deployment, a script is embedded into the repository for every branch, first that script is copied
+     #   into the target machine using SCP. For this, few secrets must be put into the github secrets
+     #
+     # > user is username is the target machine
+     # > host is the ip address of the target machine
+     # > port is the ssh port of the target machine
+     # > First, we have to generate a ssh-key pair using ssh-key gen and copy our laptop public key into the target machine's becase github server uses your loptop to acess the remote server 
+     #   .ssh/authorized_keys file. Then we have to copy our private key and put it into github secrets.
+     - name: Copy Build Script via SCP
+       uses: appleboy/scp-action@master
+       with:
+         host: ${{ secrets.SSH_HOST }}
+         username: ${{ secrets.SSH_USER }}
+         key: ${{ secrets.SSH_PRIVATE_KEY }}
+         port: ${{ secrets.SSH_PORT }}
+         source: "scripts/docker-deploy.sh"
+         target: "/tmp"
+         rm: true
+ 
+     # It is used to ssh into the target machine and run the custom script which stops and removes previous containers
+     # and pulls new image from docker hub and deploy it
+     - name: SSH and Deploy
+       uses: appleboy/ssh-action@master
+       env:
+         CONTAINER_NAME: "expense-tracker-${{ steps.extract_branch.outputs.branch }}"
+         IMAGE_NAME: "myasin786/expense-tracker:latest-${{ steps.extract_branch.outputs.branch }}"
+       with:
+         host: ${{ secrets.SSH_HOST }}
+         username: ${{ secrets.SSH_USER }}
+         key: ${{ secrets.SSH_PRIVATE_KEY }}
+         port: ${{ secrets.SSH_PORT }}
+         script_stop: true
+         script: |
+           chmod +x /tmp/scripts/docker-deploy.sh
+           /tmp/scripts/docker-deploy.sh $CONTAINER_NAME $IMAGE_NAME
+         envs: CONTAINER_NAME, IMAGE_NAME
+ 
+     # This is used to send build notifications to discord webhook in case of success, failure and canceled
+     - name: Build Success
+       uses: rjstone/discord-webhook-notify@v1
+       if: success()
+       with:
+         severity: info
+         details: Build Succeeded!
+         webhookUrl: ${{ secrets.WEBHOOK_URL }}
+     - name: Build Failure
+       uses: rjstone/discord-webhook-notify@v1
+       if: failure()
+       with:
+         severity: error
+         details: Build Failed!
+         webhookUrl: ${{ secrets.WEBHOOK_URL }}
+     - name: Build Cancelled
+       uses: rjstone/discord-webhook-notify@v1
+       if: cancelled()
+       with:
+         severity: warn
+         details: Build Cancelled!
+         webhookUrl: ${{ secrets.WEBHOOK_URL }}
+
